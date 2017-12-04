@@ -2,34 +2,79 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using devBanner.Exceptions;
 using devRant.NET;
 using SixLabors.Fonts;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Drawing;
+using SixLabors.ImageSharp.Formats.Png;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.Primitives;
 
 namespace devBanner.Logic
 {
     public class Banner
-    { 
+    {
+        private const string DevrantAvatarBaseURL = "https://avatars.devrant.com";
 
-        public static string Generate(string avatarURL, Profile profile, string subtext)
+        public static async Task<string> GenerateAsync(Profile profile, string subtext)
         {
-            var workingDir = Directory.GetCurrentDirectory();
-            var outputPath = $"{workingDir}/generated/{profile.Username}.png";
+            if (profile == null)
+            {
+                throw new ArgumentNullException(nameof(profile));
+            }
 
-            // Download rendered avatar
-            var httpClient = new HttpClient();
-            var responseStream = httpClient.GetStreamAsync(avatarURL).Result;
-            
-            var avatarImage = Image.Load(responseStream);
-            
-            System.IO.Directory.CreateDirectory("generated");
-            using (Image<Rgba32> banner = new Image<Rgba32>(800, 192))
+            // Avatar base url + avatar meta = rendered avatar url
+            var avatarURL = $"{DevrantAvatarBaseURL}/{profile.Avatar.Image}";
+
+            const string outputDir = "generated";
+            const string avatarsDir = "avatars";
+
+            var outputFileName = $"{profile.Username}.png";
+
+            var workingDir = Directory.GetCurrentDirectory();
+            var outputPath = Path.Combine(workingDir, outputDir);
+
+            var avatarPath = Path.Combine(workingDir, avatarsDir);
+
+            Directory.CreateDirectory(outputPath);
+            Directory.CreateDirectory(avatarPath);
+
+            var avatarFile = Path.Combine(avatarPath, outputFileName);
+            var outputFile = Path.Combine(outputPath, outputFileName);
+
+            byte[] data;
+
+            if (File.Exists(avatarFile))
+            {
+                data = await File.ReadAllBytesAsync(avatarFile);
+            }
+            else
+            {
+                // Download rendered avatar
+                var httpClient = new HttpClient();
+
+                using (var response = await httpClient.GetAsync(avatarURL))
+                {
+                    if (response.StatusCode == HttpStatusCode.NotFound)
+                    {
+                        throw new AvatarNotFoundException(profile.Username);
+                    }
+
+                    response.EnsureSuccessStatusCode();
+
+                    data = await response.Content.ReadAsByteArrayAsync();
+
+                    await File.WriteAllBytesAsync(avatarFile, data);
+                }
+            }
+
+            using (var avatarImage = Image.Load(data))
+            using (var banner = new Image<Rgba32>(800, 192))
             {
                 var fontCollection = new FontCollection();
                 fontCollection.Install("fonts/Comfortaa-Regular.ttf");
@@ -49,7 +94,7 @@ namespace devBanner.Logic
                 var avatarTargetX = 15;
                 var avatarTargetY = 0;
                 var avatarTarget = new Point(avatarTargetX, avatarTargetY);
-                
+
                 var usernameTargetX = banner.Width / 3;
                 var usernameTartgetY = banner.Height / 4;
                 var usernameTarget = new Point(usernameTargetX, usernameTartgetY);
@@ -82,11 +127,10 @@ namespace devBanner.Logic
                 // Draw devrant text
                 banner.DrawText("devrant.com", fontDevrant, Rgba32.White, devrantTarget, HorizontalAlignment.Left, VerticalAlignment.Top);
 
-                banner.Save(outputPath);
+                banner.Save(outputFile, new PngEncoder());
             }
 
-            responseStream.Close();
-            return outputPath;
+            return outputFile;
         }
     }
 }

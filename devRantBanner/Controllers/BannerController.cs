@@ -6,46 +6,72 @@ using devBanner.Logic;
 using devRant.NET;
 using Microsoft.AspNetCore.Mvc;
 using System.Net.Http;
+using devBanner.Exceptions;
+using Microsoft.Extensions.Logging;
 
 namespace devBanner.Controllers
 {
     [Route("generate/[controller]")]
     public class BannerController : Controller
     {
-        private string DevrantAvatarBaseURL { get; set; } = "https://avatars.devrant.com";
+        private readonly ILogger _logger;
 
-        // GET banner/get
-        [HttpGet()]
-        [HttpPost()]
-        public object Get(string username, string subtext)
+        public BannerController(ILogger<BannerController> logger)
         {
+            _logger = logger;
+        }
+
+        // GET/POST banner/get
+        [HttpGet]
+        [HttpPost]
+        public async Task<IActionResult> Get(string username, string subtext)
+        {
+            var client = DevRantClient.Create(new HttpClient());
+
+            // Convert username to userID
+            var userId = await client.GetUserID(username);
+
+            if (!userId.Success)
+            {
+                _logger.LogDebug($"User {username} does not exist.");
+
+                return BadRequest("User does not exist!");
+            }
+
+            // Use the userID to retrive the meta information about the avatar
+            var user = await client.GetUser(userId.UserId);
+            var userProfile = user.Profile;
+
+            var text = string.IsNullOrEmpty(subtext) ? userProfile.About : subtext;
+
+            if (text.Length > 56)
+            {
+                _logger.LogDebug("Subtext is too long");
+                _logger.LogDebug(subtext);
+
+                return BadRequest("Subtext too long");
+            }
+
+            string banner;
+
             try
             {
-                if (subtext.Length > 56)
-                    throw new ArgumentException("Subtext too long");
-
-                // Convert username to userID
-                var client = DevRantClient.Create(new HttpClient());
-                var userId = client.GetUserID(username).Result.UserId;
-
-                // Use the userID to retrive the meta information about the avatar
-                var userProfile = client.GetUser(userId).Result.Profile;
-                var avatar = userProfile.Avatar;
-                // Avatar base url + avatar meta = rendered avatar url
-                var avatarPath = $"{this.DevrantAvatarBaseURL}/{avatar.Image}";
-
-                var banner = Banner.Generate(avatarPath, userProfile, (String.IsNullOrEmpty(subtext) ? userProfile.About : subtext));
-
-                return base.PhysicalFile(banner, "image/png");
+                banner = await Banner.GenerateAsync(userProfile, text);
             }
-            catch (ArgumentException)
+            catch (AvatarNotFoundException ex)
             {
-                return "Subtext exceeds max subtext lenght (56 chars)";
+                return BadRequest(ex.Message);
             }
-            catch
+            catch (Exception ex)
             {
-                return "Couldn't create banner. (Wrong username?)";
+                _logger.LogError(ex, "Error");
+
+                return StatusCode(500, ex.Message);
             }
+
+            _logger.LogDebug($"Successfully generated banner for {username}");
+
+            return PhysicalFile(banner, "image/png");
         }
     }
 }
