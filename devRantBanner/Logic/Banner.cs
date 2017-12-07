@@ -7,6 +7,7 @@ using System.Net.Http;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using devBanner.Exceptions;
+using devBanner.Options;
 using devRant.NET;
 using SixLabors.Fonts;
 using SixLabors.ImageSharp;
@@ -21,7 +22,7 @@ namespace devBanner.Logic
     {
         private const string DevrantAvatarBaseURL = "https://avatars.devrant.com";
 
-        public static async Task<string> GenerateAsync(Profile profile, string subtext)
+        public static async Task<string> GenerateAsync(BannerOptions options, Profile profile, string subtext)
         {
             if (profile == null)
             {
@@ -49,7 +50,7 @@ namespace devBanner.Logic
 
             byte[] data;
 
-            if (File.Exists(avatarFile))
+            if (options.CacheAvatars && File.Exists(avatarFile))
             {
                 data = await File.ReadAllBytesAsync(avatarFile);
             }
@@ -69,7 +70,10 @@ namespace devBanner.Logic
 
                     data = await response.Content.ReadAsByteArrayAsync();
 
-                    await File.WriteAllBytesAsync(avatarFile, data);
+                    if (options.CacheAvatars)
+                    {
+                        await File.WriteAllBytesAsync(avatarFile, data);
+                    }
                 }
             }
 
@@ -96,12 +100,13 @@ namespace devBanner.Logic
                 var avatarTarget = new Point(avatarTargetX, avatarTargetY);
 
                 var usernameTargetX = banner.Width / 3;
-                var usernameTartgetY = banner.Height / 4;
-                var usernameTarget = new Point(usernameTargetX, usernameTartgetY);
+                var usernameTargetY = banner.Height / 4;
+                var usernameTarget = new Point(usernameTargetX, usernameTargetY);
+                var usernameSize = TextMeasurer.Measure(profile.Username, new RendererOptions(fontUsername));
 
                 var subtextTargetX = usernameTarget.X;
-                var subtextTartgetY = usernameTarget.Y + fontSizeUsername;
-                var subtextTarget = new Point(subtextTargetX, subtextTartgetY);
+                var subtextTargetY = usernameTarget.Y + usernameSize.Height + 10;
+                var subtextTarget = new PointF(subtextTargetX, subtextTargetY);
                 var subTextWidth = banner.Width - subtextTargetX - 15;
                 var subTextHeight = fontSizeSubtext;
 
@@ -119,7 +124,10 @@ namespace devBanner.Logic
                 banner.DrawText(profile.Username, fontUsername, Rgba32.White, usernameTarget);
 
                 // Scale font size to subtext
-                fontSubtext = fontSubtext.ScaleToText(subtext, new SizeF(subTextWidth, subTextHeight));
+                fontSubtext = fontSubtext.ScaleToText(subtext, new SizeF(subTextWidth, subTextHeight), options.MaxSubtextWidth);
+
+                // Add subtext word wrapping
+                subtext = subtext.AddWrap(fontSubtext, options.MaxSubtextWidth, options.MaxSubtextWraps);
 
                 // Draw subtext
                 banner.DrawText(subtext, fontSubtext, Rgba32.White, subtextTarget);
